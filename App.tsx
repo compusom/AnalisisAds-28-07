@@ -44,6 +44,15 @@ const fileToGenerativePart = async (file: File) => {
     };
 };
 
+const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = err => reject(err);
+        reader.readAsDataURL(file);
+    });
+};
+
 const getFormatAnalysis = async (creativeSet: CreativeSet, formatGroup: FormatGroup, language: Language, context: string): Promise<AnalysisResult | null> => {
     const isSpanish = language === 'es';
 
@@ -532,13 +541,14 @@ const App: React.FC = () => {
             try {
                 localStorage.setItem(cacheKey, JSON.stringify({ result, timestamp: Date.now() }));
                 
-                const newHistoryEntry: AnalysisHistoryEntry = { 
+                const newHistoryEntry: AnalysisHistoryEntry = {
                     clientId: clientId!,
                     filename: creativeToAnalyze.file.name,
                     hash: creativeToAnalyze.hash,
                     size: creativeToAnalyze.file.size,
                     date: new Date().toISOString(),
-                    description: result.creativeDescription 
+                    description: result.creativeDescription,
+                    dataUrl: await fileToDataUrl(creativeToAnalyze.file)
                 };
                 const updatedHistory = [...analysisHistory, newHistoryEntry].slice(-100); // Keep history from growing indefinitely
                 setAnalysisHistory(updatedHistory);

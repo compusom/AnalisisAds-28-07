@@ -1,7 +1,8 @@
 import React from 'react';
+import { UserAccount } from '../types';
 
-type AppView = 'main' | 'clients' | 'control_panel' | 'settings' | 'performance';
-type User = 'admin' | 'user';
+type AppView = 'main' | 'clients' | 'users' | 'control_panel' | 'settings' | 'performance';
+type User = 'admin' | string;
 
 interface NavbarProps {
     currentView: AppView;
@@ -10,14 +11,16 @@ interface NavbarProps {
     currentUser: User;
     onSwitchUser: (user: User) => void;
     isAdmin: boolean;
+    users: UserAccount[];
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, dbStatus, currentUser, onSwitchUser, isAdmin }) => {
+export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, dbStatus, currentUser, onSwitchUser, isAdmin, users }) => {
     
     const navItems: { view: AppView; label: string; adminOnly: boolean; }[] = [
         { view: 'main', label: 'Análisis de Creativos', adminOnly: false },
         { view: 'performance', label: 'Rendimiento', adminOnly: false },
         { view: 'clients', label: 'Clientes', adminOnly: false },
+        { view: 'users', label: 'Usuarios', adminOnly: true },
         { view: 'control_panel', label: 'Panel de Control', adminOnly: true },
         { view: 'settings', label: 'Configuración', adminOnly: false },
     ];
@@ -51,11 +54,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, dbStatu
                     </span>
                 </div>
 
-                {/* User Switcher (Simulation) */}
-                 <div className="flex items-center gap-2 text-sm p-1 bg-brand-border rounded-md">
-                    <button onClick={() => onSwitchUser('user')} className={`px-2 py-1 rounded-sm text-xs transition-colors ${currentUser === 'user' ? 'bg-brand-primary text-white shadow' : 'text-brand-text-secondary hover:bg-brand-surface'}`}>User</button>
-                    <button onClick={() => onSwitchUser('admin')} className={`px-2 py-1 rounded-sm text-xs transition-colors ${currentUser === 'admin' ? 'bg-brand-primary text-white shadow' : 'text-brand-text-secondary hover:bg-brand-surface'}`}>Admin</button>
-                 </div>
+                {/* User Switcher */}
+                <select
+                    value={currentUser}
+                    onChange={e => onSwitchUser(e.target.value)}
+                    className="text-sm bg-brand-border p-1 rounded-md text-brand-text"
+                >
+                    <option value="admin">Admin</option>
+                    {users.map(u => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                </select>
             </div>
         </nav>
     );

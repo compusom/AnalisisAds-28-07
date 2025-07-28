@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Client } from '../types';
+import { Client, UserAccount } from '../types';
 import { ClientFormModal } from './ClientFormModal';
 
 const CLIENTS_KEY = 'db_clients';
@@ -7,9 +7,10 @@ const CLIENTS_KEY = 'db_clients';
 interface ClientManagerProps {
     clients: Client[];
     setClients: React.Dispatch<React.SetStateAction<Client[]>>;
-    currentUser: 'admin' | 'user';
+    currentUser: 'admin' | string;
     analysisCounts: { [clientId: string]: number };
     onDeleteClient: (clientId: string) => void;
+    users: UserAccount[];
 }
 
 const ClientCard: React.FC<{ client: Client, analysisCount: number, onEdit: () => void, onDelete: () => void, isAdmin: boolean }> = ({ client, analysisCount, onEdit, onDelete, isAdmin }) => {
@@ -41,7 +42,7 @@ const ClientCard: React.FC<{ client: Client, analysisCount: number, onEdit: () =
     );
 };
 
-export const ClientManager: React.FC<ClientManagerProps> = ({ clients, setClients, currentUser, analysisCounts, onDeleteClient }) => {
+export const ClientManager: React.FC<ClientManagerProps> = ({ clients, setClients, currentUser, analysisCounts, onDeleteClient, users }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
 
@@ -51,6 +52,15 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, setClient
         if (isAdmin) return clients;
         return clients.filter(c => c.userId === currentUser);
     }, [clients, isAdmin, currentUser]);
+
+    const clientsByUser = useMemo(() => {
+        if (!isAdmin) return { [currentUser]: visibleClients } as Record<string, Client[]>;
+        const groups: Record<string, Client[]> = {};
+        users.forEach(u => {
+            groups[u.id] = visibleClients.filter(c => c.userId === u.id);
+        });
+        return groups;
+    }, [visibleClients, isAdmin, currentUser, users]);
 
     const handleOpenAddModal = () => {
         setEditingClient(null);
@@ -88,19 +98,30 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, setClient
                     </button>
                 </div>
                 
-                {visibleClients.length > 0 ? (
-                    <ul className="space-y-4">
-                        {visibleClients.map(client => (
-                            <ClientCard 
-                                key={client.id}
-                                client={client} 
-                                analysisCount={analysisCounts[client.id]}
-                                onEdit={() => handleOpenEditModal(client)}
-                                onDelete={() => onDeleteClient(client.id)}
-                                isAdmin={isAdmin}
-                            />
+                {Object.values(clientsByUser).some(list => list.length > 0) ? (
+                    <div className="space-y-6">
+                        {Object.entries(clientsByUser).map(([uid, list]) => (
+                            list.length > 0 && (
+                                <div key={uid}>
+                                    {isAdmin && (
+                                        <h4 className="font-semibold text-brand-text mb-2">{users.find(u => u.id === uid)?.name || uid}</h4>
+                                    )}
+                                    <ul className="space-y-4">
+                                        {list.map(client => (
+                                            <ClientCard
+                                                key={client.id}
+                                                client={client}
+                                                analysisCount={analysisCounts[client.id]}
+                                                onEdit={() => handleOpenEditModal(client)}
+                                                onDelete={() => onDeleteClient(client.id)}
+                                                isAdmin={isAdmin}
+                                            />
+                                        ))}
+                                    </ul>
+                                </div>
+                            )
                         ))}
-                    </ul>
+                    </div>
                 ) : (
                     <div className="text-center py-8 border-2 border-dashed border-brand-border rounded-lg">
                         <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12 text-brand-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>

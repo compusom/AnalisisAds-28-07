@@ -121,6 +121,7 @@ export interface AnalysisHistoryEntry {
   size: number;
   date: string;
   description: string;
+  dataUrl?: string;
 }
 
 export interface PerformanceRecord {

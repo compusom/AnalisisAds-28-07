@@ -10,17 +10,21 @@ import { Navbar } from './components/Navbar';
 import { SettingsView } from './components/SettingsView';
 import { ControlPanelView } from './components/ControlPanelView';
 import { ClientManager } from './components/ClientManager';
+import { UserManager } from './components/UserManager';
 import { ClientSelectorModal } from './components/ClientSelectorModal';
 import { PerformanceView } from './components/PerformanceView';
 
 type View = 'upload' | 'format_selection' | 'format_analysis';
-type AppView = 'main' | 'clients' | 'control_panel' | 'settings' | 'performance';
-type User = 'admin' | 'user';
+type AppView = 'main' | 'clients' | 'users' | 'control_panel' | 'settings' | 'performance';
+import { UserAccount } from './types';
+
+type User = 'admin' | string;
 
 const CACHE_KEY_PREFIX = 'metaAdCreativeAnalysis_';
 const DB_CONFIG_KEY = 'db_config';
 const DB_STATUS_KEY = 'db_status';
 const CLIENTS_KEY = 'db_clients';
+const USERS_KEY = 'db_users';
 const ANALYSIS_HISTORY_KEY = 'analysis_history';
 const CURRENT_CLIENT_KEY = 'current_client_id';
 
@@ -318,6 +322,16 @@ const App: React.FC = () => {
         };
     });
     const [dbStatus, setDbStatus] = useState<boolean>(false);
+
+    const [users, setUsers] = useState<UserAccount[]>(() => {
+        try {
+            const saved = localStorage.getItem(USERS_KEY);
+            return saved ? JSON.parse(saved) : [{ id: 'user', name: 'Usuario' }];
+        } catch (e) {
+            console.error("Failed to parse users from localStorage", e);
+            return [{ id: 'user', name: 'Usuario' }];
+        }
+    });
     
     const [clients, setClients] = useState<Client[]>(() => {
         try {
@@ -345,8 +359,8 @@ const App: React.FC = () => {
 
     const visibleClients = useMemo(() => {
         if (isAdmin) return clients;
-        return clients.filter(c => c.userId === 'user'); // Simple simulation
-    }, [clients, isAdmin]);
+        return clients.filter(c => c.userId === currentUser);
+    }, [clients, isAdmin, currentUser]);
 
     const analysisCounts = useMemo(() => {
         const counts: { [clientId: string]: number } = {};
@@ -649,13 +663,14 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen text-brand-text p-4 sm:p-6 lg:p-8">
-            <Navbar 
+            <Navbar
                 currentView={mainView}
                 onNavigate={setMainView}
                 dbStatus={dbStatus}
                 currentUser={currentUser}
                 onSwitchUser={setCurrentUser}
                 isAdmin={isAdmin}
+                users={users}
             />
 
             {(isLoading || testing) && (
@@ -674,7 +689,19 @@ const App: React.FC = () => {
             {mainView === 'performance' && <PerformanceView clients={visibleClients} analysisHistory={analysisHistory} />}
             {mainView === 'settings' && <SettingsView initialConfig={dbConfig} onTestConnection={handleTestConnection} dbStatus={dbStatus} />}
             {mainView === 'control_panel' && isAdmin && <ControlPanelView />}
-            {mainView === 'clients' && <ClientManager clients={clients} setClients={setClients} currentUser={currentUser} analysisCounts={analysisCounts} onDeleteClient={handleDeleteClient} />}
+            {mainView === 'users' && isAdmin && (
+                <UserManager users={users} setUsers={setUsers} clients={clients} />
+            )}
+            {mainView === 'clients' && (
+                <ClientManager
+                    clients={clients}
+                    setClients={setClients}
+                    currentUser={currentUser}
+                    analysisCounts={analysisCounts}
+                    onDeleteClient={handleDeleteClient}
+                    users={users}
+                />
+            )}
 
             <ClientSelectorModal
                 isOpen={isClientModalOpen}

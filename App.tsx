@@ -308,7 +308,14 @@ const App: React.FC = () => {
 
     const [dbConfig, setDbConfig] = useState(() => {
         const saved = localStorage.getItem(DB_CONFIG_KEY);
-        return saved ? JSON.parse(saved) : { host: 'postgres.heredia.ar', port: '7777', user: 'supostgres', pass: 'd0pam1na!', database: 'app' };
+        if (saved) return JSON.parse(saved);
+        return {
+            host: process.env.DB_HOST || '',
+            port: process.env.DB_PORT || '',
+            user: process.env.DB_USER || '',
+            pass: process.env.DB_PASS || '',
+            database: process.env.DB_NAME || ''
+        };
     });
     const [dbStatus, setDbStatus] = useState<boolean>(false);
     

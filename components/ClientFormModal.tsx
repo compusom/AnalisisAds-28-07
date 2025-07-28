@@ -16,7 +16,7 @@ interface ClientFormModalProps {
     onClose: () => void;
     onSave: (client: Client) => void;
     initialData: Client | null;
-    currentUser: 'admin' | 'user';
+    currentUser: 'admin' | string;
 }
 
 export const ClientFormModal: React.FC<ClientFormModalProps> = ({ isOpen, onClose, onSave, initialData, currentUser }) => {

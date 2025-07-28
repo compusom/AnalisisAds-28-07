@@ -10,17 +10,21 @@ import { Navbar } from './components/Navbar';
 import { SettingsView } from './components/SettingsView';
 import { ControlPanelView } from './components/ControlPanelView';
 import { ClientManager } from './components/ClientManager';
+import { UserManager } from './components/UserManager';
 import { ClientSelectorModal } from './components/ClientSelectorModal';
 import { PerformanceView } from './components/PerformanceView';
 
 type View = 'upload' | 'format_selection' | 'format_analysis';
-type AppView = 'main' | 'clients' | 'control_panel' | 'settings' | 'performance';
-type User = 'admin' | 'user';
+type AppView = 'main' | 'clients' | 'users' | 'control_panel' | 'settings' | 'performance';
+import { UserAccount } from './types';
+
+type User = 'admin' | string;
 
 const CACHE_KEY_PREFIX = 'metaAdCreativeAnalysis_';
 const DB_CONFIG_KEY = 'db_config';
 const DB_STATUS_KEY = 'db_status';
 const CLIENTS_KEY = 'db_clients';
+const USERS_KEY = 'db_users';
 const ANALYSIS_HISTORY_KEY = 'analysis_history';
 const CURRENT_CLIENT_KEY = 'current_client_id';
 
@@ -38,6 +42,15 @@ const fileToGenerativePart = async (file: File) => {
             mimeType: file.type,
         },
     };
+};
+
+const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = err => reject(err);
+        reader.readAsDataURL(file);
+    });
 };
 
 const getFormatAnalysis = async (creativeSet: CreativeSet, formatGroup: FormatGroup, language: Language, context: string): Promise<AnalysisResult | null> => {
@@ -308,9 +321,26 @@ const App: React.FC = () => {
 
     const [dbConfig, setDbConfig] = useState(() => {
         const saved = localStorage.getItem(DB_CONFIG_KEY);
-        return saved ? JSON.parse(saved) : { host: 'postgres.heredia.ar', port: '7777', user: 'supostgres', pass: 'd0pam1na!', database: 'app' };
+        if (saved) return JSON.parse(saved);
+        return {
+            host: process.env.DB_HOST || '',
+            port: process.env.DB_PORT || '',
+            user: process.env.DB_USER || '',
+            pass: process.env.DB_PASS || '',
+            database: process.env.DB_NAME || ''
+        };
     });
     const [dbStatus, setDbStatus] = useState<boolean>(false);
+
+    const [users, setUsers] = useState<UserAccount[]>(() => {
+        try {
+            const saved = localStorage.getItem(USERS_KEY);
+            return saved ? JSON.parse(saved) : [{ id: 'user', name: 'Usuario' }];
+        } catch (e) {
+            console.error("Failed to parse users from localStorage", e);
+            return [{ id: 'user', name: 'Usuario' }];
+        }
+    });
     
     const [clients, setClients] = useState<Client[]>(() => {
         try {
@@ -338,8 +368,8 @@ const App: React.FC = () => {
 
     const visibleClients = useMemo(() => {
         if (isAdmin) return clients;
-        return clients.filter(c => c.userId === 'user'); // Simple simulation
-    }, [clients, isAdmin]);
+        return clients.filter(c => c.userId === currentUser);
+    }, [clients, isAdmin, currentUser]);
 
     const analysisCounts = useMemo(() => {
         const counts: { [clientId: string]: number } = {};
@@ -511,13 +541,14 @@ const App: React.FC = () => {
             try {
                 localStorage.setItem(cacheKey, JSON.stringify({ result, timestamp: Date.now() }));
                 
-                const newHistoryEntry: AnalysisHistoryEntry = { 
+                const newHistoryEntry: AnalysisHistoryEntry = {
                     clientId: clientId!,
                     filename: creativeToAnalyze.file.name,
                     hash: creativeToAnalyze.hash,
                     size: creativeToAnalyze.file.size,
                     date: new Date().toISOString(),
-                    description: result.creativeDescription 
+                    description: result.creativeDescription,
+                    dataUrl: await fileToDataUrl(creativeToAnalyze.file)
                 };
                 const updatedHistory = [...analysisHistory, newHistoryEntry].slice(-100); // Keep history from growing indefinitely
                 setAnalysisHistory(updatedHistory);
@@ -642,13 +673,14 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen text-brand-text p-4 sm:p-6 lg:p-8">
-            <Navbar 
+            <Navbar
                 currentView={mainView}
                 onNavigate={setMainView}
                 dbStatus={dbStatus}
                 currentUser={currentUser}
                 onSwitchUser={setCurrentUser}
                 isAdmin={isAdmin}
+                users={users}
             />
 
             {(isLoading || testing) && (
@@ -667,7 +699,19 @@ const App: React.FC = () => {
             {mainView === 'performance' && <PerformanceView clients={visibleClients} analysisHistory={analysisHistory} />}
             {mainView === 'settings' && <SettingsView initialConfig={dbConfig} onTestConnection={handleTestConnection} dbStatus={dbStatus} />}
             {mainView === 'control_panel' && isAdmin && <ControlPanelView />}
-            {mainView === 'clients' && <ClientManager clients={clients} setClients={setClients} currentUser={currentUser} analysisCounts={analysisCounts} onDeleteClient={handleDeleteClient} />}
+            {mainView === 'users' && isAdmin && (
+                <UserManager users={users} setUsers={setUsers} clients={clients} />
+            )}
+            {mainView === 'clients' && (
+                <ClientManager
+                    clients={clients}
+                    setClients={setClients}
+                    currentUser={currentUser}
+                    analysisCounts={analysisCounts}
+                    onDeleteClient={handleDeleteClient}
+                    users={users}
+                />
+            )}
 
             <ClientSelectorModal
                 isOpen={isClientModalOpen}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import { GoogleGenAI } from '@google/genai';
 import { Client, PerformanceRecord, AnalysisHistoryEntry, MatchedPerformanceRecord, LastUploadInfo } from '../types';
 
 const PERFORMANCE_DATA_KEY = 'ads_performance_data';
@@ -146,6 +147,14 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
     const [feedback, setFeedback] = useState<Feedback | null>(null);
     const [lastUploadInfo, setLastUploadInfo] = useState<LastUploadInfo | null>(null);
     const [showMatchedOnly, setShowMatchedOnly] = useState(false);
+    const [insights, setInsights] = useState<string | null>(null);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [startDate, setStartDate] = useState(() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        return d.toISOString().slice(0,10);
+    });
+    const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0,10));
 
     const allPerformanceData = useMemo(() => {
         try {
@@ -192,6 +201,47 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
             };
         }).sort((a,b) => new Date(b.Día).getTime() - new Date(a.Día).getTime());
     }, [selectedClient, allPerformanceData, analysisHistory]);
+
+    const filteredByDate = useMemo(() => {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        return matchedClientData.filter(d => {
+            const day = new Date(d['Día']);
+            return day >= start && day <= end;
+        });
+    }, [matchedClientData, startDate, endDate]);
+
+    const summaryMetrics = useMemo(() => {
+        const spend = filteredByDate.reduce((acc, r) => acc + (r['Importe gastado (EUR)'] || 0), 0);
+        const purchases = filteredByDate.reduce((acc, r) => acc + (r['Compras'] || 0), 0);
+        const value = filteredByDate.reduce((acc, r) => acc + (r['Valor de conversión de compras'] || 0), 0);
+        const impressions = filteredByDate.reduce((acc, r) => acc + (r['Impresiones'] || 0), 0);
+        const clicks = filteredByDate.reduce((acc, r) => acc + (r['Clics en el enlace'] || 0), 0);
+        const roas = spend > 0 ? value / spend : 0;
+        const cpa = purchases > 0 ? spend / purchases : 0;
+        const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+        const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+        return { spend, roas, cpa, ctr, cpm };
+    }, [filteredByDate]);
+
+    const topCreatives = useMemo(() => {
+        const map = new Map<string, { spend: number; value: number; record: MatchedPerformanceRecord }>();
+        filteredByDate.forEach(row => {
+            const key = row['Imagen, video y presentación'];
+            const entry = map.get(key) || { spend: 0, value: 0, record: row };
+            entry.spend += row['Importe gastado (EUR)'] || 0;
+            entry.value += row['Valor de conversión de compras'] || 0;
+            entry.record = row;
+            map.set(key, entry);
+        });
+        const arr = Array.from(map.values()).map(e => ({
+            ...e,
+            roas: e.spend > 0 ? e.value / e.spend : 0,
+            image: analysisHistory.find(h => selectedClient && h.clientId === selectedClient.id && e.record['Imagen, video y presentación']?.includes(h.filename))?.dataUrl,
+            description: analysisHistory.find(h => selectedClient && h.clientId === selectedClient.id && e.record['Imagen, video y presentación']?.includes(h.filename))?.description
+        }));
+        return arr.sort((a,b) => b.roas - a.roas).slice(0,6);
+    }, [filteredByDate, analysisHistory, selectedClient]);
 
     const handleClientSelect = (client: Client) => {
         setSelectedClient(client);
@@ -333,6 +383,25 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
         setIsProcessing(false);
     };
 
+    const handleGenerateInsights = async () => {
+        if (topCreatives.length === 0 || isGenerating) return;
+        setIsGenerating(true);
+        try {
+            const descriptions = topCreatives.map(c => c.description).filter(Boolean).join('\n');
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+            const model = ai.getGenerativeModel({ model: 'gemini-pro' });
+            const prompt = `Analiza por qué estos creativos funcionaron bien y sugiere próximos pasos:\n${descriptions}`;
+            const result = await model.generateContent(prompt);
+            const text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            setInsights(text);
+        } catch (e) {
+            console.error('Insights error', e);
+            setInsights('Error generando insights');
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
     if (view === 'list') {
         return (
             <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
@@ -392,9 +461,61 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
                            <ReportUploader onFileUpload={handleFileUpload} disabled={isProcessing} />
                         </div>
                     </div>
-                     {feedback && (
+                    <div className="mt-4 flex flex-col sm:flex-row justify-between gap-4 items-center">
+                        <div className="flex gap-2 text-sm">
+                            <label>
+                                Inicio:
+                                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="ml-1 bg-brand-bg border border-brand-border rounded" />
+                            </label>
+                            <label>
+                                Fin:
+                                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="ml-1 bg-brand-bg border border-brand-border rounded" />
+                            </label>
+                        </div>
+                        <button onClick={handleGenerateInsights} disabled={isGenerating} className="bg-brand-primary text-white px-3 py-1 rounded-md text-sm">
+                            {isGenerating ? 'Generando...' : 'Analizar ganadores'}
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mt-4 text-center">
+                        <div>
+                            <p className="text-xs text-brand-text-secondary">ROAS</p>
+                            <p className="font-semibold text-brand-text">{summaryMetrics.roas.toFixed(2)}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-brand-text-secondary">CPA</p>
+                            <p className="font-semibold text-brand-text">{summaryMetrics.cpa.toFixed(2)}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-brand-text-secondary">CTR</p>
+                            <p className="font-semibold text-brand-text">{summaryMetrics.ctr.toFixed(2)}%</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-brand-text-secondary">CPM</p>
+                            <p className="font-semibold text-brand-text">{summaryMetrics.cpm.toFixed(2)}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-brand-text-secondary">SPEND</p>
+                            <p className="font-semibold text-brand-text">{summaryMetrics.spend.toFixed(2)}</p>
+                        </div>
+                    </div>
+                    {topCreatives.length > 0 && (
+                        <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-4">
+                            {topCreatives.map((c, i) => (
+                                <div key={i} className="text-center">
+                                    {c.image ? <img src={c.image} alt="creative" className="w-full rounded-md" /> : <div className="w-full h-32 bg-brand-border rounded-md" />}
+                                    <p className="text-xs mt-1">ROAS: {c.roas.toFixed(2)}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {insights && (
+                        <div className="mt-6 bg-brand-border/30 p-4 rounded-md whitespace-pre-wrap text-sm">
+                            {insights}
+                        </div>
+                    )}
+                    {feedback && (
                         <div className="mt-4 text-center p-3 rounded-md text-sm font-semibold"
-                            style={{ 
+                            style={{
                                 backgroundColor: feedback.type === 'info' ? '#3B82F620' : feedback.type === 'success' ? '#22C55E20' : '#EF444420',
                                 color: feedback.type === 'info' ? '#60A5FA' : feedback.type === 'success' ? '#4ADE80' : '#F87171'
                             }}>
@@ -427,7 +548,7 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
                             Limpiar datos del cliente
                         </button>
                     </div>
-                    <PerformanceTable data={matchedClientData} showMatchedOnly={showMatchedOnly} />
+                    <PerformanceTable data={filteredByDate} showMatchedOnly={showMatchedOnly} />
                 </div>
             </div>
         );

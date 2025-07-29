@@ -109,6 +109,11 @@ export interface Client {
   userId: string;
 }
 
+export interface UserAccount {
+  id: string;
+  name: string;
+}
+
 export interface AnalysisHistoryEntry {
   clientId: string;
   filename: string;
@@ -116,6 +121,7 @@ export interface AnalysisHistoryEntry {
   size: number;
   date: string;
   description: string;
+  dataUrl?: string;
 }
 
 export interface PerformanceRecord {

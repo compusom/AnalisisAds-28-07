@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Line } from 'react-chartjs-2';
+import 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import { GoogleGenAI } from '@google/genai';
 import { Client, PerformanceRecord, AnalysisHistoryEntry, MatchedPerformanceRecord, LastUploadInfo } from '../types';
@@ -6,8 +8,14 @@ import { Client, PerformanceRecord, AnalysisHistoryEntry, MatchedPerformanceReco
 const PERFORMANCE_DATA_KEY = 'ads_performance_data';
 const PROCESSED_REPORTS_KEY = 'processed_reports_hashes';
 
-type View = 'list' | 'detail';
+type View = 'list' | 'detail' | 'winners';
 type Feedback = { type: 'info' | 'success' | 'error', message: string };
+
+const smallChartOptions = {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: { x: { display: false }, y: { display: false } }
+};
 
 
 const getFileHash = async (file: File): Promise<string> => {
@@ -224,19 +232,70 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
         return { spend, roas, cpa, ctr, cpm };
     }, [filteredByDate]);
 
+    const metricsOverTime = useMemo(() => {
+        const grouped: Record<string, MatchedPerformanceRecord[]> = {};
+        filteredByDate.forEach(r => {
+            const day = r['Día'];
+            grouped[day] = grouped[day] || [];
+            grouped[day].push(r);
+        });
+        return Object.entries(grouped)
+            .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
+            .map(([day, rows]) => {
+                const spend = rows.reduce((acc, r) => acc + (r['Importe gastado (EUR)'] || 0), 0);
+                const purchases = rows.reduce((acc, r) => acc + (r['Compras'] || 0), 0);
+                const value = rows.reduce((acc, r) => acc + (r['Valor de conversión de compras'] || 0), 0);
+                const impressions = rows.reduce((acc, r) => acc + (r['Impresiones'] || 0), 0);
+                const clicks = rows.reduce((acc, r) => acc + (r['Clics en el enlace'] || 0), 0);
+                const roas = spend > 0 ? value / spend : 0;
+                const cpa = purchases > 0 ? spend / purchases : 0;
+                const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+                const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+                return { day, spend, roas, cpa, ctr, cpm };
+            });
+    }, [filteredByDate]);
+
+    const labels = metricsOverTime.map(m => m.day);
+    const roasChart = useMemo(() => ({
+        labels,
+        datasets: [{ data: metricsOverTime.map(m => m.roas), borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.2)', tension: 0.3 }]
+    }), [metricsOverTime, labels]);
+    const cpaChart = useMemo(() => ({
+        labels,
+        datasets: [{ data: metricsOverTime.map(m => m.cpa), borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,0.2)', tension: 0.3 }]
+    }), [metricsOverTime, labels]);
+    const ctrChart = useMemo(() => ({
+        labels,
+        datasets: [{ data: metricsOverTime.map(m => m.ctr), borderColor: '#facc15', backgroundColor: 'rgba(250,204,21,0.2)', tension: 0.3 }]
+    }), [metricsOverTime, labels]);
+    const cpmChart = useMemo(() => ({
+        labels,
+        datasets: [{ data: metricsOverTime.map(m => m.cpm), borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.2)', tension: 0.3 }]
+    }), [metricsOverTime, labels]);
+    const spendChart = useMemo(() => ({
+        labels,
+        datasets: [{ data: metricsOverTime.map(m => m.spend), borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.2)', tension: 0.3 }]
+    }), [metricsOverTime, labels]);
+
     const topCreatives = useMemo(() => {
-        const map = new Map<string, { spend: number; value: number; record: MatchedPerformanceRecord }>();
+        const map = new Map<string, { spend: number; value: number; impressions: number; clicks: number; purchases: number; record: MatchedPerformanceRecord }>();
         filteredByDate.forEach(row => {
             const key = row['Imagen, video y presentación'];
-            const entry = map.get(key) || { spend: 0, value: 0, record: row };
+            const entry = map.get(key) || { spend: 0, value: 0, impressions: 0, clicks: 0, purchases: 0, record: row };
             entry.spend += row['Importe gastado (EUR)'] || 0;
             entry.value += row['Valor de conversión de compras'] || 0;
+            entry.impressions += row['Impresiones'] || 0;
+            entry.clicks += row['Clics en el enlace'] || 0;
+            entry.purchases += row['Compras'] || 0;
             entry.record = row;
             map.set(key, entry);
         });
         const arr = Array.from(map.values()).map(e => ({
             ...e,
             roas: e.spend > 0 ? e.value / e.spend : 0,
+            cpa: e.purchases > 0 ? e.spend / e.purchases : 0,
+            ctr: e.impressions > 0 ? (e.clicks / e.impressions) * 100 : 0,
+            cpm: e.impressions > 0 ? (e.spend / e.impressions) * 1000 : 0,
             image: analysisHistory.find(h => selectedClient && h.clientId === selectedClient.id && e.record['Imagen, video y presentación']?.includes(h.filename))?.dataUrl,
             description: analysisHistory.find(h => selectedClient && h.clientId === selectedClient.id && e.record['Imagen, video y presentación']?.includes(h.filename))?.description
         }));
@@ -448,7 +507,7 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
                     Volver a la lista de clientes
                 </button>
 
-                <div className="bg-brand-surface rounded-lg p-6 shadow-lg">
+            <div className="bg-brand-surface rounded-lg p-6 shadow-lg">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                         <div className="flex items-center gap-4">
                             <img src={selectedClient.logo} alt={selectedClient.name} className="h-16 w-16 rounded-full object-cover bg-brand-border" />
@@ -472,30 +531,40 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
                                 <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="ml-1 bg-brand-bg border border-brand-border rounded" />
                             </label>
                         </div>
-                        <button onClick={handleGenerateInsights} disabled={isGenerating} className="bg-brand-primary text-white px-3 py-1 rounded-md text-sm">
-                            {isGenerating ? 'Generando...' : 'Analizar ganadores'}
-                        </button>
+                        <div className="flex gap-2">
+                            <button onClick={() => setView('winners')} disabled={topCreatives.length === 0} className="bg-brand-border text-brand-text px-3 py-1 rounded-md text-sm hover:bg-brand-border/70">
+                                Ver Ganadores
+                            </button>
+                            <button onClick={handleGenerateInsights} disabled={isGenerating} className="bg-brand-primary text-white px-3 py-1 rounded-md text-sm">
+                                {isGenerating ? 'Generando...' : 'Analizar ganadores'}
+                            </button>
+                        </div>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mt-4 text-center">
                         <div>
                             <p className="text-xs text-brand-text-secondary">ROAS</p>
                             <p className="font-semibold text-brand-text">{summaryMetrics.roas.toFixed(2)}</p>
+                            <Line options={smallChartOptions} data={roasChart} className="h-16" />
                         </div>
                         <div>
                             <p className="text-xs text-brand-text-secondary">CPA</p>
                             <p className="font-semibold text-brand-text">{summaryMetrics.cpa.toFixed(2)}</p>
+                            <Line options={smallChartOptions} data={cpaChart} className="h-16" />
                         </div>
                         <div>
                             <p className="text-xs text-brand-text-secondary">CTR</p>
                             <p className="font-semibold text-brand-text">{summaryMetrics.ctr.toFixed(2)}%</p>
+                            <Line options={smallChartOptions} data={ctrChart} className="h-16" />
                         </div>
                         <div>
                             <p className="text-xs text-brand-text-secondary">CPM</p>
                             <p className="font-semibold text-brand-text">{summaryMetrics.cpm.toFixed(2)}</p>
+                            <Line options={smallChartOptions} data={cpmChart} className="h-16" />
                         </div>
                         <div>
                             <p className="text-xs text-brand-text-secondary">SPEND</p>
                             <p className="font-semibold text-brand-text">{summaryMetrics.spend.toFixed(2)}</p>
+                            <Line options={smallChartOptions} data={spendChart} className="h-16" />
                         </div>
                     </div>
                     {topCreatives.length > 0 && (
@@ -548,11 +617,37 @@ export const PerformanceView: React.FC<{ clients: Client[]; analysisHistory: Ana
                             Limpiar datos del cliente
                         </button>
                     </div>
-                    <PerformanceTable data={filteredByDate} showMatchedOnly={showMatchedOnly} />
+                <PerformanceTable data={filteredByDate} showMatchedOnly={showMatchedOnly} />
+            </div>
+        </div>
+    );
+    }
+
+    if (view === 'winners' && selectedClient) {
+        return (
+            <div className="max-w-7xl mx-auto space-y-8 animate-fade-in">
+                <button onClick={() => setView('detail')} className="self-start -mb-2 bg-brand-border/50 text-brand-text-secondary hover:bg-brand-border px-4 py-2 rounded-md transition-colors flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                    Volver
+                </button>
+                <h2 className="text-3xl font-bold text-brand-text">Top Creativos</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {topCreatives.map((c,i) => (
+                        <div key={i} className="bg-brand-surface rounded-lg p-4 shadow text-center">
+                            {c.image ? <img src={c.image} alt="ad" className="w-full h-48 object-cover rounded-md" /> : <div className="w-full h-48 bg-brand-border rounded-md" />}
+                            <div className="mt-2 space-y-1 text-sm">
+                                <p>ROAS: {c.roas.toFixed(2)}</p>
+                                <p>CPA: {c.cpa.toFixed(2)}</p>
+                                <p>CTR: {c.ctr.toFixed(2)}%</p>
+                                <p>CPM: {c.cpm.toFixed(2)}</p>
+                                <p>Spend: {c.spend.toFixed(2)}</p>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
         );
     }
-    
+
     return null;
 };
